@@ -4,6 +4,7 @@ import { DeckPage } from './pages/DeckPage'
 import { Study } from './pages/Study'
 import { ImportPage } from './pages/ImportPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 function Shell() {
   const { pathname } = useLocation()
@@ -24,6 +25,7 @@ function Shell() {
         </header>
       )}
       <main className="main">
+        <ErrorBoundary key={pathname}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/deck/:id" element={<DeckPage />} />
@@ -31,6 +33,7 @@ function Shell() {
           <Route path="/import" element={<ImportPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
+        </ErrorBoundary>
       </main>
     </div>
   )

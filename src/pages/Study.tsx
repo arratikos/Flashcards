@@ -8,6 +8,7 @@ import { CardContent, hasSound } from '../components/CardContent'
 import { Counts } from '../components/Counts'
 import { CardEditor } from '../components/CardEditor'
 import { CloseIcon, EditIcon, SpeakerIcon, SwapIcon, UndoIcon } from '../components/Icons'
+import { isDbError, recoverIfBroken } from '../lib/health'
 
 const GRADES: { grade: Grade; label: string; key: string; cls: string }[] = [
   { grade: Rating.Again, label: 'Otra vez', key: '1', cls: 'again' },
@@ -34,19 +35,31 @@ export function Study() {
   const [studied, setStudied] = useState(0)
   const [autoSpeak, setAutoSpeak] = useState(readAuto)
   const [editing, setEditing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const busy = useRef(false)
+  // Sync and edits re-emit the deck object; keep the latest in a ref so that doesn't restart the current card.
+  const deckRef = useRef(deck)
+  deckRef.current = deck
+  const deckId = deck?.id
 
-  const counts = useLiveQuery(async () => (deck ? deckCounts(deck) : undefined), [deck, card])
+  const fail = useCallback((e: unknown, what: string) => {
+    console.error(e)
+    setError(what)
+    if (isDbError(e)) recoverIfBroken()
+  }, [])
+
+  const counts = useLiveQuery(async () => (deck ? deckCounts(deck).catch(() => undefined) : undefined), [deck, card])
 
   const load = useCallback(async () => {
-    if (!deck) return
+    const d = deckRef.current
+    if (!d) return
     setRevealed(false)
-    setCard(await nextCard(deck))
-  }, [deck])
+    setCard(await nextCard(d))
+  }, [])
 
   useEffect(() => {
-    load()
-  }, [load])
+    if (deckId) load().catch((e) => fail(e, 'No se pudo cargar la siguiente tarjeta.'))
+  }, [deckId, load, fail])
 
   // Speak the front when a card appears, and the back when it is revealed.
   useEffect(() => {
@@ -65,27 +78,37 @@ export function Study() {
     async (g: Grade) => {
       if (!card || busy.current) return
       busy.current = true
+      setError(null)
       try {
         await answer(card, g)
         setHistory((h) => [...h.slice(-19), card])
         setStudied((n) => n + 1)
         await load()
+      } catch (e) {
+        fail(e, 'No se pudo guardar la respuesta.')
       } finally {
         busy.current = false
       }
     },
-    [card, load],
+    [card, load, fail],
   )
 
   const undo = useCallback(async () => {
     const prev = history[history.length - 1]
     if (!prev || busy.current) return
-    await undoLast(prev)
-    setHistory((h) => h.slice(0, -1))
-    setStudied((n) => Math.max(0, n - 1))
-    setCard(prev)
-    setRevealed(true)
-  }, [history])
+    busy.current = true
+    try {
+      await undoLast(prev)
+      setHistory((h) => h.slice(0, -1))
+      setStudied((n) => Math.max(0, n - 1))
+      setCard(prev)
+      setRevealed(true)
+    } catch (e) {
+      fail(e, 'No se pudo deshacer.')
+    } finally {
+      busy.current = false
+    }
+  }, [history, fail])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -115,7 +138,21 @@ export function Study() {
   }, [revealed, reveal, grade, undo, editing])
 
   if (deck === null) return <div className="page"><p>Este mazo ya no existe. <Link to="/">Volver a mazos</Link></p></div>
-  if (!deck || card === undefined) return null
+  if (!deck || card === undefined) {
+    return (
+      <div className="study">
+        <header className="study__bar">
+          <Link to="/" className="icon-btn" aria-label="Salir del estudio"><CloseIcon /></Link>
+          <span className="study__title muted">{error ?? 'Cargando…'}</span>
+        </header>
+        {error && (
+          <div className="row">
+            <button className="btn btn--primary" onClick={() => location.reload()}>Recargar</button>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   const toggleAuto = () => {
     const v = !autoSpeak
@@ -130,8 +167,12 @@ export function Study() {
 
   const swap = async () => {
     if (!card) return
-    setCard(await swapCard(card))
-    setRevealed(false)
+    try {
+      setCard(await swapCard(card))
+      setRevealed(false)
+    } catch (e) {
+      fail(e, 'No se pudo invertir la tarjeta.')
+    }
   }
 
   const intervals = card && revealed ? previewIntervals(card) : null
@@ -159,6 +200,13 @@ export function Study() {
           <button className="icon-btn" onClick={undo} disabled={!history.length} title="Deshacer (U)" aria-label="Deshacer última respuesta"><UndoIcon /></button>
         </div>
       </header>
+
+      {error && (
+        <p className="notice notice--error study__error" role="alert">
+          {error}{' '}
+          <button className="linklike" onClick={() => location.reload()}>Recargar</button>
+        </p>
+      )}
 
       {card === null ? (
         <div className="finished">

@@ -1,10 +1,12 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { registerSW } from 'virtual:pwa-register'
 import { App } from './App'
+import { installDbWatchdog } from './lib/health'
+import { installUpdates } from './lib/updates'
 import './styles.css'
 
-registerSW({ immediate: true })
+installUpdates()
+installDbWatchdog()
 
 // Ask the browser not to evict our IndexedDB data under storage pressure.
 navigator.storage?.persist?.().catch(() => {})

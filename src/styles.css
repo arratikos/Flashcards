@@ -909,3 +909,17 @@ textarea:focus {
   color: var(--muted);
   margin: 0 0 1.5rem;
 }
+
+.error-detail {
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  color: var(--muted);
+}
+
+.study__error {
+  margin: 0.5rem 0 0;
+}
