@@ -1,14 +1,63 @@
-import { useLiveQuery } from 'dexie-react-hooks'
+import { useLiveQuery, useObservable } from 'dexie-react-hooks'
 import { useState } from 'react'
-import { db } from '../lib/db'
+import { cloudUrl, db } from '../lib/db'
 import { exportBackup, restoreBackup } from '../lib/importers'
+
+const SYNC_LABELS: Record<string, string> = {
+  connecting: 'Conectando…',
+  connected: 'Sincronizado',
+  disconnected: 'Sin conexión: se sincronizará al volver',
+  offline: 'Sin conexión: se sincronizará al volver',
+  error: 'Error al sincronizar',
+}
+
+function SyncPanel() {
+  const user = useObservable(db.cloud.currentUser)
+  const sync = useObservable(db.cloud.syncState)
+  const [busy, setBusy] = useState(false)
+
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true)
+    try {
+      await fn()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="panel">
+      <h2>Sincronización</h2>
+      {user?.isLoggedIn ? (
+        <>
+          <p className="muted">
+            Conectado como <strong>{user.email ?? user.userId}</strong>.{' '}
+            {sync?.phase === 'pushing' || sync?.phase === 'pulling' ? 'Sincronizando…' : (sync && SYNC_LABELS[sync.status]) ?? ''}
+            {sync?.error && ` (${sync.error.message})`}
+          </p>
+          <div className="row">
+            <button className="btn" disabled={busy} onClick={() => run(() => db.cloud.sync({ purpose: 'push', wait: true }))}>Sincronizar ahora</button>
+            <button className="btn btn--ghost" disabled={busy} onClick={() => run(() => db.cloud.logout())}>Cerrar sesión</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="muted">
+            Inicia sesión con tu email para tener los mismos mazos y el mismo progreso en el ordenador y en el móvil. Te enviaremos un código; no hace falta contraseña. Los mazos que ya tienes en este dispositivo se suben a tu cuenta.
+          </p>
+          <button className="btn btn--primary" disabled={busy} onClick={() => run(() => db.cloud.login())}>Iniciar sesión para sincronizar</button>
+        </>
+      )}
+    </div>
+  )
+}
 
 export function SettingsPage() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const stats = useLiveQuery(async () => ({
     decks: await db.decks.count(),
     cards: await db.cards.count(),
-    reviews: await db.reviews.count(),
+    reviews: await db.reviewLog.count(),
   }))
 
   const download = async () => {
@@ -34,10 +83,12 @@ export function SettingsPage() {
       <h1>Ajustes</h1>
       {msg && <p className={msg.ok ? 'notice notice--done' : 'notice notice--error'} role="status">{msg.text}</p>}
 
+      {cloudUrl && <SyncPanel />}
+
       <div className="panel">
         <h2>Tus datos</h2>
         <p className="muted">
-          Todo se guarda en este dispositivo, sin cuenta ni servidor.
+          {cloudUrl ? 'Todo se guarda en este dispositivo y, si inicias sesión, se sincroniza con tus otros dispositivos.' : 'Todo se guarda en este dispositivo, sin cuenta ni servidor.'}
           {stats && ` Ahora mismo: ${stats.decks} mazos, ${stats.cards} tarjetas y ${stats.reviews} repasos.`}
         </p>
         <p className="muted">Para pasar tus tarjetas a otro dispositivo, descarga una copia aquí y restáurala allí. Las imágenes y audios importados de Anki no se incluyen.</p>

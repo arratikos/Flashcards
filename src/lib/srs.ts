@@ -1,5 +1,5 @@
 import { fsrs, generatorParameters, Rating, State, type Grade } from 'ts-fsrs'
-import { db, startOfToday, type Card, type Deck } from './db'
+import { db, startOfToday, uid, type Card, type Deck } from './db'
 
 export { Rating, State }
 export type { Grade }
@@ -17,7 +17,7 @@ export interface DeckCounts {
 }
 
 async function newIntroducedToday(deckId: string) {
-  return db.reviews
+  return db.reviewLog
     .where('[deckId+reviewedAt]')
     .between([deckId, startOfToday()], [deckId, Infinity])
     .filter((r) => r.state === State.New)
@@ -90,17 +90,19 @@ export function previewIntervals(card: Card, now = new Date()): Record<Grade, nu
 export async function answer(card: Card, grade: Grade) {
   const now = new Date()
   const { card: srs } = scheduler.next(card.srs, now, grade)
-  await db.transaction('rw', db.cards, db.reviews, async () => {
+  await db.transaction('rw', db.cards, db.reviewLog, async () => {
     await db.cards.update(card.id, { srs, due: srs.due.getTime(), state: srs.state })
-    await db.reviews.add({ cardId: card.id, deckId: card.deckId, rating: grade, state: card.state, reviewedAt: now.getTime() })
+    await db.reviewLog.add({ id: uid(), cardId: card.id, deckId: card.deckId, rating: grade, state: card.state, reviewedAt: now.getTime() })
   })
 }
 
 export async function undoLast(card: Card) {
-  await db.transaction('rw', db.cards, db.reviews, async () => {
+  await db.transaction('rw', db.cards, db.reviewLog, async () => {
     await db.cards.put(card)
-    const last = await db.reviews.where('cardId').equals(card.id).last()
-    if (last?.id) await db.reviews.delete(last.id)
+    // UUID keys carry no order, so find the latest log by time.
+    const logs = await db.reviewLog.where('cardId').equals(card.id).sortBy('reviewedAt')
+    const last = logs[logs.length - 1]
+    if (last) await db.reviewLog.delete(last.id)
   })
 }
 

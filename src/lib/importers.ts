@@ -1,5 +1,5 @@
 import Papa from 'papaparse'
-import { db, newCard, newDeck, newReverseCard, type Card, type Deck } from './db'
+import { db, newCard, newDeck, newReverseCard, uid, type Card, type Deck, type ReviewLog } from './db'
 
 export interface ParsedRow {
   front: string
@@ -220,7 +220,7 @@ function mimeFor(name: string) {
 // ---------- Backup ----------
 
 export async function exportBackup() {
-  const [decks, cards, reviews] = await Promise.all([db.decks.toArray(), db.cards.toArray(), db.reviews.toArray()])
+  const [decks, cards, reviews] = await Promise.all([db.decks.toArray(), db.cards.toArray(), db.reviewLog.toArray()])
   const data = { app: 'repaso', version: 1, exportedAt: new Date().toISOString(), decks, cards, reviews }
   return new Blob([JSON.stringify(data)], { type: 'application/json' })
 }
@@ -232,10 +232,12 @@ export async function restoreBackup(file: File) {
     ...c,
     srs: { ...c.srs, due: new Date(c.srs.due), last_review: c.srs.last_review ? new Date(c.srs.last_review) : undefined },
   }))
-  await db.transaction('rw', db.decks, db.cards, db.reviews, async () => {
+  // Older backups have numeric review ids; give them UUIDs so they can sync.
+  const reviews: ReviewLog[] = data.reviews.map((r: ReviewLog) => (typeof r.id === 'string' ? r : { ...r, id: uid() }))
+  await db.transaction('rw', db.decks, db.cards, db.reviewLog, async () => {
     await db.decks.bulkPut(data.decks)
     await db.cards.bulkPut(cards)
-    await db.reviews.bulkPut(data.reviews)
+    await db.reviewLog.bulkPut(reviews)
   })
   return { decks: data.decks.length as number, cards: cards.length }
 }

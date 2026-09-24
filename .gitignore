@@ -1,3 +1,5 @@
 node_modules
 dist
 dev-dist
+# Dexie Cloud client secret (created by 'npx dexie-cloud create')
+dexie-cloud.key

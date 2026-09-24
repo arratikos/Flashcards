@@ -1,4 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie'
+import dexieCloud from 'dexie-cloud-addon'
 import { createEmptyCard, type Card as SrsCard } from 'ts-fsrs'
 
 export interface Deck {
@@ -30,7 +31,7 @@ export interface Card {
 }
 
 export interface ReviewLog {
-  id?: number
+  id: string
   cardId: string
   deckId: string
   rating: number
@@ -44,10 +45,10 @@ export interface Media {
   blob: Blob
 }
 
-export const db = new Dexie('repaso') as Dexie & {
+export const db = new Dexie('repaso', { addons: [dexieCloud] }) as Dexie & {
   decks: EntityTable<Deck, 'id'>
   cards: EntityTable<Card, 'id'>
-  reviews: EntityTable<ReviewLog, 'id'>
+  reviewLog: EntityTable<ReviewLog, 'id'>
   media: EntityTable<Media, 'name'>
 }
 
@@ -57,6 +58,26 @@ db.version(1).stores({
   reviews: '++id, cardId, deckId, reviewedAt, [deckId+reviewedAt]',
   media: 'name',
 })
+
+// Dexie Cloud cannot sync auto-incremented keys, so review logs move to a table keyed by UUID.
+db.version(2)
+  .stores({ reviewLog: 'id, cardId, deckId, reviewedAt, [deckId+reviewedAt]' })
+  .upgrade(async (tx) => {
+    const old = await tx.table('reviews').toArray()
+    await tx.table('reviewLog').bulkAdd(old.map(({ id: _, ...r }) => ({ ...r, id: crypto.randomUUID() })))
+  })
+db.version(3).stores({ reviews: null })
+
+/** Sync is enabled only when the build knows the Dexie Cloud database (see .env). */
+export const cloudUrl: string | undefined = import.meta.env.VITE_DEXIE_CLOUD_URL
+if (cloudUrl) {
+  db.cloud.configure({
+    databaseUrl: cloudUrl,
+    requireAuth: false,
+    // Anki media is keyed by file name, which is not unique across users; it stays on each device.
+    unsyncedTables: ['media'],
+  })
+}
 
 export const uid = () => crypto.randomUUID()
 
@@ -98,9 +119,9 @@ export function newDeck(name: string, frontLang = '', backLang = ''): Deck {
 }
 
 export async function deleteDeck(deckId: string) {
-  await db.transaction('rw', db.decks, db.cards, db.reviews, async () => {
+  await db.transaction('rw', db.decks, db.cards, db.reviewLog, async () => {
     await db.cards.where('deckId').equals(deckId).delete()
-    await db.reviews.where('deckId').equals(deckId).delete()
+    await db.reviewLog.where('deckId').equals(deckId).delete()
     await db.decks.delete(deckId)
   })
 }
